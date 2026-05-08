@@ -207,12 +207,7 @@ def strategy(df):
     # ===== 连续涨跌
     consecutive = consecutive_days(df)
 
-    # ===== 极端行情
-    if abs(pct_change) >= EXTREME_THRESHOLD:
-        return {
-            "signal": "暂停操作",
-            "reason": "市场剧烈波动"
-        }
+
 
     # ===== 不同市场用不同策略（核心升级）
 
@@ -280,7 +275,23 @@ def strategy(df):
         risk.append("成交量放大，趋势确认度较高")
 
     confidence = calculate_confidence(market_state, rsi, pct_change, volume_state, consecutive)
-    
+    # ===== 极端行情
+    if abs(pct_change) >= EXTREME_THRESHOLD:
+        return {
+            "signal": "暂停操作",
+            "reason": "市场剧烈波动",
+            "position": position,
+            "market_state": market_state,
+            "risk": "；".join(risk),
+            "pct_change": pct_change,
+            "rsi": rsi,
+            "ma5": ma5,
+            "ma20": ma20,
+            "current_price": current_price,
+            "volume_state": volume_state,
+            "consecutive": consecutive,
+            "confidence": confidence
+        }
     return {
         "signal": signal,
         "position": position,
