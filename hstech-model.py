@@ -163,7 +163,7 @@ def strategy(df):
     # ===== 时间处理（避免未收盘数据干扰）
     now = datetime.now()
     if now.hour < 15:
-        latest = df.iloc[-2]
+        latest = df.iloc[-1]
     else:
         latest = df.iloc[-1]
 
@@ -200,7 +200,7 @@ def strategy(df):
         volume_state = "正常"
 
     # ===== RSI
-    rsi = latest["RSI"]
+    rsi = round(latest["RSI"], 3)
     if pd.isna(rsi):
         rsi = 50
 
