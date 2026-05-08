@@ -21,6 +21,10 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    env:
+      SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+      SENDER_AUTH_CODE: ${{ secrets.SENDER_AUTH_CODE }}
+      RECV_EMAIL: ${{ secrets.RECV_EMAIL }}
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
