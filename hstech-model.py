@@ -104,39 +104,94 @@ def consecutive_days(df):
 
     return count
 
+# =========================
+# 置信度计算（核心升级）
+# =========================
+
+def calculate_confidence(market_state, rsi, pct_change, volume_state, consecutive):
+
+    score = 50  # 基础分
+
+    # 趋势
+    if market_state == "上涨趋势":
+        score += 25
+    elif market_state == "震荡":
+        score += 10
+    else:
+        score -= 20
+
+    # RSI
+    if rsi < 30:
+        score += 20
+    elif rsi < 40:
+        score += 10
+    elif rsi > 70:
+        score -= 15
+
+    # 涨跌幅
+    if pct_change <= -1:
+        score += 15
+    elif pct_change >= 1:
+        score -= 10
+
+    # 成交量
+    if volume_state == "放量":
+        score += 10
+    elif volume_state == "缩量":
+        score -= 10
+
+    # 连续涨跌
+    if consecutive <= -2:
+        score += 10
+    elif consecutive >= 2:
+        score -= 10
+
+    # 限制范围
+    score = max(0, min(100, score))
+
+    return score
 
 # =========================
 # 策略逻辑
 # =========================
 
 def strategy(df):
+
     if len(df) < 20:
-        raise Exception("数据不足，至少需要20条记录, 无法计算指标")
-    latest = df.iloc[-1]
+        raise Exception("数据不足")
+
+    # ===== 时间处理（避免未收盘数据干扰）
+    now = datetime.now()
+    if now.hour < 15:
+        latest = df.iloc[-2]
+    else:
+        latest = df.iloc[-1]
 
     current_price = latest["Close"]
     low_price = latest["Low"]
-    pct_change = float(latest["PctChange"])
 
-    # 5日均线
+    pct_change = float(latest["PctChange"])
+    if abs(pct_change) < 1:
+        pct_change *= 100
+
+    # ===== 均线
     ma5 = df["Close"].tail(5).mean()
-    
-    # 20日均线趋势过滤，防止越买越跌
     ma20 = df["Close"].tail(20).mean()
 
-    # 成交量
+    # ===== 趋势强弱（核心升级）
+    ma20_slope = df["Close"].tail(20).diff().mean()
+
+    if current_price > ma20 and ma20_slope > 0:
+        market_state = "上涨趋势"
+    elif current_price < ma20 and ma20_slope < 0:
+        market_state = "下跌趋势"
+    else:
+        market_state = "震荡"
+
+    # ===== 成交量
     current_volume = latest["Volume"]
     avg_volume = df["Volume"].tail(20).mean()
 
-    # RSI
-    rsi = latest["RSI"]
-    if pd.isna(rsi):
-        rsi = 50  # RSI数据不足时默认中性值 
-
-    # 连续涨跌
-    consecutive = consecutive_days(df)
-
-    # 成交量状态
     if current_volume > avg_volume * 1.2:
         volume_state = "放量"
     elif current_volume < avg_volume * 0.8:
@@ -144,72 +199,101 @@ def strategy(df):
     else:
         volume_state = "正常"
 
-    # 极端波动
-    if abs(pct_change) >= EXTREME_THRESHOLD:
+    # ===== RSI
+    rsi = latest["RSI"]
+    if pd.isna(rsi):
+        rsi = 50
 
+    # ===== 连续涨跌
+    consecutive = consecutive_days(df)
+
+    # ===== 极端行情
+    if abs(pct_change) >= EXTREME_THRESHOLD:
         return {
             "signal": "暂停操作",
-            "reason": "市场波动过大"
+            "reason": "市场剧烈波动"
         }
 
-    # 超卖
-    oversold = (
-        rsi < 30
-        or consecutive <= -2
-    )
+    # ===== 不同市场用不同策略（核心升级）
 
-    # 超买
-    overbought = (
-        rsi > 70
-        or consecutive >= 2
-    )
+    # 🟢 上涨趋势：回调买
+    if market_state == "上涨趋势":
 
-    # 加仓条件
-    buy_signal = all([
-        pct_change <= BUY_THRESHOLD,
-        oversold,
-        low_price <= ma5,
-        volume_state != "缩量",
-        current_price >= ma20 * 0.98  # 趋势过滤，避免越买越跌
-    ])
+        if pct_change <= -1 and rsi < 40:
+            signal = "强加仓"
+            position = "+10%"
+        elif pct_change <= -0.5:
+            signal = "弱加仓"
+            position = "+5%"
+        elif pct_change >= 2 and rsi > 70:
+            signal = "减仓"
+            position = "-5%"
+        else:
+            signal = "不动"
+            position = "保持"
 
-    # 减仓条件
-    sell_signal = all([
-        pct_change >= SELL_THRESHOLD,
-        overbought,
-        current_price >= ma5,
-        volume_state != "缩量"
-    ])
+    # 🟡 震荡：高抛低吸
+    elif market_state == "震荡":
 
-    # 输出信号
-    if buy_signal:
+        if pct_change <= -1 and (rsi < 30 or consecutive <= -2):
+            signal = "加仓"
+            position = "+5%~10%"
+        elif pct_change >= 1 and (rsi > 70 or consecutive >= 2):
+            signal = "减仓"
+            position = "-5%~10%"
+        else:
+            signal = "不动"
+            position = "保持"
 
-        signal = "加仓"
-        position = "+5% ~ +10%"
-        risk = "避免一次性重仓"
-
-    elif sell_signal:
-
-        signal = "减仓"
-        position = "-5% ~ -10%"
-        risk = "避免过早清仓"
-
+    # 🔴 下跌趋势：严格控制风险
     else:
 
-        signal = "不动"
-        position = "保持仓位"
-        risk = "避免频繁交易"
+        if pct_change <= -2 and rsi < 25:
+            signal = "轻仓试探"
+            position = "+3%"
+        elif pct_change >= 1:
+            signal = "减仓"
+            position = "-5%"
+        else:
+            signal = "不动"
+            position = "观望为主"
 
+    # ===== 风险提示（增强）
+    risk = []
+
+    # 趋势风险
+    if market_state == "下跌趋势":
+        risk.append("处于下跌趋势，建议控制仓位")
+    elif market_state == "上涨趋势":
+        risk.append("趋势向上，但注意不要追高")
+
+    # RSI风险
+    if rsi > 70:
+        risk.append("短期过热，可能回调")
+    elif rsi < 30:
+        risk.append("短期超卖，可能反弹")
+
+    # 成交量风险
+    if volume_state == "缩量":
+        risk.append("成交量不足，信号可靠性下降")
+    elif volume_state == "放量":
+        risk.append("成交量放大，趋势确认度较高")
+
+    confidence = calculate_confidence(market_state, rsi, pct_change, volume_state, consecutive)
+    
     return {
         "signal": signal,
         "position": position,
-        "risk": risk,
+        "market_state": market_state,
+        "risk": "；".join(risk),
         "pct_change": pct_change,
         "rsi": rsi,
         "ma5": ma5,
+        "ma20": ma20,
         "current_price": current_price,
         "volume_state": volume_state,
-        "consecutive": consecutive
+        "consecutive": consecutive,
+        "confidence": confidence
     }
 
 
@@ -226,6 +310,8 @@ def print_result(result):
     print(f"\n时间：{datetime.now()}")
 
     print(f"\n结论：{result['signal']}")
+    print(f"置信度：{result['confidence']}")
+    print(f"市场状态：{result['market_state']}")
 
     if result["signal"] != "暂停操作":
 
@@ -235,6 +321,7 @@ def print_result(result):
         print(f"RSI：{round(result['rsi'],2)}")
         print(f"当前价格：{round(result['current_price'],2)}")
         print(f"5日均线：{round(result['ma5'],2)}")
+        print(f"20日均线：{round(result['ma20'],2)}")
         print(f"成交量状态：{result['volume_state']}")
         print(f"连续涨跌天数：{result['consecutive']}")
 
