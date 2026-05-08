@@ -285,7 +285,7 @@ def strategy(df):
 # =========================
 def print_result(result):
     log = "\n==========================\n"
-    log += "恒生科技ETF交易模型\n"
+    log += "恒生科技ETF操作建议\n"
     log += "==========================\n"
 
     log += f"\n时间：{datetime.now()}\n"
