@@ -329,10 +329,10 @@ def print_result(result):
         print("\n指标情况：")
 
         print(f"今日涨跌幅：{result['pct_change']}%")
-        print(f"RSI：{round(result['rsi'],2)}")
-        print(f"当前价格：{round(result['current_price'],2)}")
-        print(f"5日均线：{round(result['ma5'],2)}")
-        print(f"20日均线：{round(result['ma20'],2)}")
+        print(f"RSI：{round(result['rsi'],3)}")
+        print(f"当前价格：{round(result['current_price'],3)}")
+        print(f"5日均线：{round(result['ma5'],3)}")
+        print(f"20日均线：{round(result['ma20'],3)}")
         print(f"成交量状态：{result['volume_state']}")
         print(f"连续涨跌天数：{result['consecutive']}")
 
