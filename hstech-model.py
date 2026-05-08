@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
-
 import akshare as ak
 import pandas as pd
 from ta.momentum import RSIIndicator
 from datetime import datetime
 import time
-import requests
 
+# ==================== 新增：邮件发送依赖 ====================
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
+import os
+# ============================================================
 
 # =========================
 # 参数
@@ -18,13 +22,33 @@ BUY_THRESHOLD = -1
 SELL_THRESHOLD = 1
 EXTREME_THRESHOLD = 5
 
+# ==================== 邮件配置（从环境变量读取，兼容GitHub Secrets和本地调试） ====================
+QQ_EMAIL = os.getenv("SENDER_EMAIL", "你的本地调试用QQ邮箱@qq.com")
+QQ_AUTH_CODE = os.getenv("SENDER_AUTH_CODE", "你的本地调试用16位授权码")
+RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的本地调试用接收邮箱@qq.com")
+# =================================================================================================
+
+# ==================== 新增：发邮件函数（完全不用改） ====================
+def send_email(content):
+    try:
+        msg = MIMEText(content, "plain", "utf-8")
+        msg["Subject"] = Header("513130 ETF 交易信号", "utf-8")
+        msg["From"] = QQ_EMAIL
+        msg["To"] = RECEIVE_EMAIL
+
+        server = smtplib.SMTP_SSL("smtp.qq.com", 465)
+        server.login(QQ_EMAIL, QQ_AUTH_CODE)
+        server.sendmail(QQ_EMAIL, RECEIVE_EMAIL, msg.as_string())
+        server.quit()
+        print("✅ 邮件推送成功")
+    except Exception as e:
+        print("❌ 邮件发送失败:", e)
+# ======================================================================
 
 # =========================
 # 获取ETF数据
 # =========================
-
 def get_etf_data(symbol):
-    
     retry = 5
     for i in range(retry):
         try:
@@ -50,69 +74,47 @@ def get_etf_data(symbol):
             print("获取ETF数据失败:", e)
             if i < retry - 1:
                 print("3秒后重试...\n")
-                time.sleep(3)  # 等待1秒后重试
+                time.sleep(3)
             else:
                 raise Exception("获取ETF数据失败，已达到最大重试次数")
-
-
-
 
 # =========================
 # RSI计算
 # =========================
-
 def calculate_rsi(df):
-
     rsi = RSIIndicator(
         close=df["Close"],
         window=14
     )
-
     df["RSI"] = rsi.rsi()
-
     return df
-
 
 # =========================
 # 连续涨跌统计
 # =========================
-
 def consecutive_days(df):
-
     closes = df["Close"].tolist()
-
     count = 0
-
     for i in range(len(closes)-1, 0, -1):
-
         if closes[i] > closes[i-1]:
-
             if count >= 0:
                 count += 1
             else:
                 break
-
         elif closes[i] < closes[i-1]:
-
             if count <= 0:
                 count -= 1
             else:
                 break
-
         else:
             break
-
     return count
 
 # =========================
-# 置信度计算（核心升级）
+# 置信度计算
 # =========================
-
 def calculate_confidence(market_state, rsi, pct_change, volume_state, consecutive):
-
-    score = 50  # 基础分
-
-    # 趋势
+    score = 50
     if market_state == "上涨趋势":
         score += 25
     elif market_state == "震荡":
@@ -120,7 +122,6 @@ def calculate_confidence(market_state, rsi, pct_change, volume_state, consecutiv
     else:
         score -= 20
 
-    # RSI
     if rsi < 30:
         score += 20
     elif rsi < 40:
@@ -128,39 +129,31 @@ def calculate_confidence(market_state, rsi, pct_change, volume_state, consecutiv
     elif rsi > 70:
         score -= 15
 
-    # 涨跌幅
     if pct_change <= -1:
         score += 15
     elif pct_change >= 1:
         score -= 10
 
-    # 成交量
     if volume_state == "放量":
         score += 10
     elif volume_state == "缩量":
         score -= 10
 
-    # 连续涨跌
     if consecutive <= -2:
         score += 10
     elif consecutive >= 2:
         score -= 10
 
-    # 限制范围
     score = max(0, min(100, score))
-
     return score
 
 # =========================
 # 策略逻辑
 # =========================
-
 def strategy(df):
-
     if len(df) < 20:
         raise Exception("数据不足")
 
-    # ===== 时间处理（避免未收盘数据干扰）
     now = datetime.now()
     if now.hour < 15:
         latest = df.iloc[-1]
@@ -174,11 +167,9 @@ def strategy(df):
     if abs(pct_change) < 1:
         pct_change *= 100
 
-    # ===== 均线
     ma5 = df["Close"].tail(5).mean()
     ma20 = df["Close"].tail(20).mean()
 
-    # ===== 趋势强弱（核心升级）
     ma20_slope = df["Close"].tail(20).diff().mean()
 
     if current_price > ma20 and ma20_slope > 0:
@@ -188,7 +179,6 @@ def strategy(df):
     else:
         market_state = "震荡"
 
-    # ===== 成交量
     current_volume = latest["Volume"]
     avg_volume = df["Volume"].tail(20).mean()
 
@@ -199,21 +189,13 @@ def strategy(df):
     else:
         volume_state = "正常"
 
-    # ===== RSI
     rsi = round(latest["RSI"], 3)
     if pd.isna(rsi):
         rsi = 50
 
-    # ===== 连续涨跌
     consecutive = consecutive_days(df)
 
-
-
-    # ===== 不同市场用不同策略（核心升级）
-
-    # 🟢 上涨趋势：回调买
     if market_state == "上涨趋势":
-
         if pct_change <= -1 and rsi < 40:
             signal = "强加仓"
             position = "+10%"
@@ -227,9 +209,7 @@ def strategy(df):
             signal = "不动"
             position = "保持"
 
-    # 🟡 震荡：高抛低吸
     elif market_state == "震荡":
-
         if pct_change <= -1 and (rsi < 30 or consecutive <= -2):
             signal = "加仓"
             position = "+5%~10%"
@@ -240,9 +220,7 @@ def strategy(df):
             signal = "不动"
             position = "保持"
 
-    # 🔴 下跌趋势：严格控制风险
     else:
-
         if pct_change <= -2 and rsi < 25:
             signal = "轻仓试探"
             position = "+3%"
@@ -253,29 +231,24 @@ def strategy(df):
             signal = "不动"
             position = "观望为主"
 
-    # ===== 风险提示（增强）
     risk = []
-
-    # 趋势风险
     if market_state == "下跌趋势":
         risk.append("处于下跌趋势，建议控制仓位")
     elif market_state == "上涨趋势":
         risk.append("趋势向上，但注意不要追高")
 
-    # RSI风险
     if rsi > 70:
         risk.append("短期过热，可能回调")
     elif rsi < 30:
         risk.append("短期超卖，可能反弹")
 
-    # 成交量风险
     if volume_state == "缩量":
         risk.append("成交量不足，信号可靠性下降")
     elif volume_state == "放量":
         risk.append("成交量放大，趋势确认度较高")
 
     confidence = calculate_confidence(market_state, rsi, pct_change, volume_state, consecutive)
-    # ===== 极端行情
+
     if abs(pct_change) >= EXTREME_THRESHOLD:
         return {
             "signal": "暂停操作",
@@ -307,69 +280,57 @@ def strategy(df):
         "confidence": confidence
     }
 
-
 # =========================
 # 输出
 # =========================
-
 def print_result(result):
+    log = "\n==========================\n"
+    log += "恒生科技ETF交易模型\n"
+    log += "==========================\n"
 
-    print("\n==========================")
-    print("恒生科技ETF交易模型")
-    print("==========================")
-
-    print(f"\n时间：{datetime.now()}")
-
-    print(f"\n结论：{result['signal']}")
-    print(f"置信度：{result['confidence']}")
-    print(f"市场状态：{result['market_state']}")
+    log += f"\n时间：{datetime.now()}\n"
+    log += f"\n结论：{result['signal']}\n"
+    log += f"置信度：{result['confidence']}\n"
+    log += f"市场状态：{result['market_state']}\n"
 
     if result["signal"] != "暂停操作":
-
-        print("\n指标情况：")
-
-        print(f"今日涨跌幅：{result['pct_change']}%")
-        print(f"RSI：{round(result['rsi'],3)}")
-        print(f"当前价格：{round(result['current_price'],3)}")
-        print(f"5日均线：{round(result['ma5'],3)}")
-        print(f"20日均线：{round(result['ma20'],3)}")
-        print(f"成交量状态：{result['volume_state']}")
-        print(f"连续涨跌天数：{result['consecutive']}")
-
-        print("\n仓位建议：")
-        print(result["position"])
-
-        print("\n风险提示：")
-        print(result["risk"])
-
+        log += "\n指标情况：\n"
+        log += f"今日涨跌幅：{result['pct_change']}%\n"
+        log += f"RSI：{round(result['rsi'],3)}\n"
+        log += f"当前价格：{round(result['current_price'],3)}\n"
+        log += f"5日均线：{round(result['ma5'],3)}\n"
+        log += f"20日均线：{round(result['ma20'],3)}\n"
+        log += f"成交量状态：{result['volume_state']}\n"
+        log += f"连续涨跌天数：{result['consecutive']}\n"
+        log += "\n仓位建议：\n"
+        log += result["position"] + "\n"
+        log += "\n风险提示：\n"
+        log += result["risk"] + "\n"
     else:
+        log += result["reason"] + "\n"
 
-        print(result["reason"])
-
-    print("\n==========================\n")
-
+    log += "==========================\n"
+    print(log)
+    return log  # 返回日志内容，用于发邮件
 
 # =========================
 # 主程序
 # =========================
-
 def main():
-
     try:
-
         df = get_etf_data(ETF_CODE)
-
         df = calculate_rsi(df)
-
         result = strategy(df)
-
-        print_result(result)
+        log_content = print_result(result)
+        
+        # ==================== 新增：自动发邮件 ====================
+        send_email(log_content)
+        # ==========================================================
 
     except Exception as e:
-
-        print("运行失败：", e)
-
+        error_msg = f"运行失败：{str(e)}"
+        print(error_msg)
+        send_email(error_msg)
 
 if __name__ == "__main__":
-
     main()
