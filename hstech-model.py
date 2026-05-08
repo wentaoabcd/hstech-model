@@ -7,17 +7,6 @@ from datetime import datetime
 import time
 import requests
 
-session = requests.Session()
-
-session.headers.update({
-    "User-Agent": (
-        "Mozilla/5.0 "
-        "(Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "(KHTML, like Gecko) "
-        "Chrome/122.0 Safari/537.36"
-    )
-})
 
 # =========================
 # 参数
@@ -121,15 +110,19 @@ def consecutive_days(df):
 # =========================
 
 def strategy(df):
-
+    if len(df) < 20:
+        raise Exception("数据不足，至少需要20条记录, 无法计算指标")
     latest = df.iloc[-1]
 
     current_price = latest["Close"]
     low_price = latest["Low"]
-    pct_change = latest["PctChange"]
+    pct_change = float(latest["PctChange"])
 
     # 5日均线
     ma5 = df["Close"].tail(5).mean()
+    
+    # 20日均线趋势过滤，防止越买越跌
+    ma20 = df["Close"].tail(20).mean()
 
     # 成交量
     current_volume = latest["Volume"]
@@ -137,6 +130,8 @@ def strategy(df):
 
     # RSI
     rsi = latest["RSI"]
+    if pd.isna(rsi):
+        rsi = 50  # RSI数据不足时默认中性值 
 
     # 连续涨跌
     consecutive = consecutive_days(df)
@@ -160,13 +155,13 @@ def strategy(df):
     # 超卖
     oversold = (
         rsi < 30
-        or consecutive <= -3
+        or consecutive <= -2
     )
 
     # 超买
     overbought = (
         rsi > 70
-        or consecutive >= 3
+        or consecutive >= 2
     )
 
     # 加仓条件
@@ -174,7 +169,8 @@ def strategy(df):
         pct_change <= BUY_THRESHOLD,
         oversold,
         low_price <= ma5,
-        volume_state != "缩量"
+        volume_state != "缩量",
+        current_price >= ma20 * 0.98  # 趋势过滤，避免越买越跌
     ])
 
     # 减仓条件
