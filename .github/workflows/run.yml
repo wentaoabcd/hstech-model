@@ -1,4 +1,4 @@
-name: 定时运行 Python 脚本
+name: 定时获取恒生科技操作建议
 
 on:
   schedule:
