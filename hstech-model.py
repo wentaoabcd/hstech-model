@@ -29,7 +29,7 @@ RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的接收邮箱@qq.com")
 def send_email(content):
     try:
         msg = MIMEText(content, "plain", "utf-8")
-        msg["Subject"] = Header("513130 ETF 交易信号", "utf-8")
+        msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8")
         msg["From"] = QQ_EMAIL
         msg["To"] = RECEIVE_EMAIL
         server = smtplib.SMTP_SSL("smtp.qq.com", 465)
@@ -81,7 +81,7 @@ def get_realtime_etf_data(symbol):
 # 【最终修复】获取ETF数据（双接口 + 实时数据补全）
 # =========================
 def get_etf_data(symbol):
-    retry = 5
+    retry = 3
 
     # =========================
     # 数据源1：东方财富
@@ -376,7 +376,7 @@ def strategy(df):
 # =========================
 def print_result(result):
     log = "\n==========================\n"
-    log += "恒生科技ETF操作建议\n"
+    log += f"{ETF_CODE} ETF操作建议\n"
     log += "==========================\n"
     log += f"时间：{datetime.now()}\n"
     log += f"结论：{result['signal']}\n"
@@ -406,7 +406,7 @@ def print_result(result):
     # 近十日数据输出
     log += "\n近十日数据参考：\n"
     log += "------------------------------------------------------\n"
-    log += f"{'日期':<12} {'开盘':<8} {'收盘':<8} {'涨跌幅(%)':<8} {'成交量(万)':<12} {'RSI':<10}\n"
+    log += f"{'日期':<12} {'开盘':<6} {'收盘':<6} {'涨跌幅(%)':<6} {'成交量(万)':<10} {'RSI':<8}\n"
     #log += f"{'日期':<12} {'开盘':<6} {'最高':<6} {'最低':<6} {'收盘':<6} {'涨跌幅(%)':<7} {'成交量(万)':<10} {'RSI':<10}\n"
     log += "------------------------------------------------------\n"
     
@@ -426,7 +426,7 @@ def print_result(result):
         rsi = f"{day['RSI']:.3f}" if pd.notna(day['RSI']) else "-"
         
         # 拼接行数据
-        log += f"{date:<12} {open_price:<8} {close_price:<8} {pct_change_str:<8} {volume:<12} {rsi:<10}\n"
+        log += f"{date:<12} {open_price:<6} {close_price:<6} {pct_change_str:<6} {volume:<10} {rsi:<8}\n"
         #log += f"{date:<12} {open_price:<8} {high_price:<8} {low_price:<8} {close_price:<8} {pct_change_str:<10} {volume:<12} {rsi:<10}\n"
     
     log += "------------------------------------------------------\n"
