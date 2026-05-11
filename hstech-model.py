@@ -405,16 +405,17 @@ def print_result(result):
     log += "==========================\n"
     # 近十日数据输出
     log += "\n近十日数据参考：\n"
-    log += "--------------------------------------------------------------------------------\n"
-    log += f"{'日期':<10} {'开盘':<6} {'最高':<6} {'最低':<6} {'收盘':<6} {'涨跌幅(%)':<7} {'成交量(万)':<10} {'RSI':<10}\n"
-    log += "--------------------------------------------------------------------------------\n"
+    log += "------------------------------------------------------\n"
+    log += f"{'日期':<12} {'开盘':<8} {'收盘':<8} {'涨跌幅(%)':<8} {'成交量(万)':<12} {'RSI':<10}\n"
+    #log += f"{'日期':<12} {'开盘':<6} {'最高':<6} {'最低':<6} {'收盘':<6} {'涨跌幅(%)':<7} {'成交量(万)':<10} {'RSI':<10}\n"
+    log += "------------------------------------------------------\n"
     
     for day in result['last_10_days']:
         # 统一格式化数据
         date = str(day['Date'])[:10] if len(str(day['Date'])) > 10 else str(day['Date'])
         open_price = f"{day['Open']:.3f}" if pd.notna(day['Open']) else "-"
-        high_price = f"{day['High']:.3f}" if pd.notna(day['High']) else "-"
-        low_price = f"{day['Low']:.3f}" if pd.notna(day['Low']) else "-"
+        #high_price = f"{day['High']:.3f}" if pd.notna(day['High']) else "-"
+        #low_price = f"{day['Low']:.3f}" if pd.notna(day['Low']) else "-"
         close_price = f"{day['Close']:.3f}" if pd.notna(day['Close']) else "-"
         
         # 涨跌幅直接用（已经是百分比）
@@ -425,9 +426,10 @@ def print_result(result):
         rsi = f"{day['RSI']:.3f}" if pd.notna(day['RSI']) else "-"
         
         # 拼接行数据
-        log += f"{date:<12} {open_price:<8} {high_price:<8} {low_price:<8} {close_price:<8} {pct_change_str:<10} {volume:<12} {rsi:<10}\n"
+        log += f"{date:<12} {open_price:<8} {close_price:<8} {pct_change_str:<8} {volume:<12} {rsi:<10}\n"
+        #log += f"{date:<12} {open_price:<8} {high_price:<8} {low_price:<8} {close_price:<8} {pct_change_str:<10} {volume:<12} {rsi:<10}\n"
     
-    log += "----------------------------------------------------------------------\n"
+    log += "------------------------------------------------------\n"
     print(log)
     return log
 
