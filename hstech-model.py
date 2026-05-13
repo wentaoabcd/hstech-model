@@ -41,6 +41,24 @@ def send_email(content):
         print("❌ 邮件发送失败:", e)
 
 # =========================
+# 辅助函数：判断数据是否包含当日数据
+# =========================
+def has_today_data(df):
+    """
+    检查DataFrame是否包含当日数据
+    返回：True（包含）/False（不包含）
+    """
+    try:
+        # 统一日期格式为datetime对象
+        df["Date"] = pd.to_datetime(df["Date"]).dt.date
+        latest_date = df.iloc[-1]["Date"]
+        today = date.today()
+        return latest_date == today
+    except Exception as e:
+        print(f"[日期检查] 失败：{str(e)}")
+        return False
+
+# =========================
 # 获取实时数据（彻底修复）
 # =========================
 def get_realtime_etf_data(symbol):
@@ -78,7 +96,7 @@ def get_realtime_etf_data(symbol):
         return None
 
 # =========================
-# 【最终修复】获取ETF数据（双接口 + 实时数据补全）
+# 【最终修复】获取ETF数据（双接口 + 按需补全实时数据）
 # =========================
 def get_etf_data(symbol):
     retry = 3
@@ -107,19 +125,23 @@ def get_etf_data(symbol):
                     "涨跌幅": "PctChange"
                 }, inplace=True)
                 
-                # 补全实时数据
-                realtime_data = get_realtime_etf_data(symbol)
-                if realtime_data:
-                    try:
-                        latest_date = pd.to_datetime(df.iloc[-1]["Date"]).date()
-                        today = date.today()
-                        
-                        if latest_date < today:
+                # 先判断是否包含当日数据，仅缺失时补全
+                if not has_today_data(df.copy()):  # 传副本避免修改原数据
+                    print("[东财] 数据缺失今日行情，开始补全...")
+                    realtime_data = get_realtime_etf_data(symbol)
+                    if realtime_data:
+                        try:
+                            # 恢复Date为字符串格式，便于拼接
+                            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
                             new_row = pd.DataFrame([realtime_data])
                             df = pd.concat([df, new_row], ignore_index=True)
-                            print(f"✅ 已补全今日({today})实时数据到东财数据源")
-                    except Exception as e:
-                        print(f"[东财补全] 日期检查失败：{str(e)}")
+                            print(f"✅ 已补全今日({date.today()})实时数据到东财数据源")
+                        except Exception as e:
+                            print(f"[东财补全] 失败：{str(e)}")
+                else:
+                    print("[东财] 数据已包含今日最新行情，无需补全")
+                    # 恢复Date为字符串格式
+                    df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
             
                 return df
         except Exception as e:
@@ -127,7 +149,7 @@ def get_etf_data(symbol):
         time.sleep((i + 1) * 2)
 
     # =========================
-    # 数据源2：新浪（修复笔误+补全逻辑）
+    # 数据源2：新浪（修复笔误+按需补全）
     # =========================
     print("\n[新浪] 尝试备用数据源...")
     try:
@@ -165,26 +187,24 @@ def get_etf_data(symbol):
                 raise Exception("新浪数据有效长度不足")
             
             # =========================
-            # 🔥 修复笔误 + 精准补全
+            # 🔥 按需补全：先判断是否有今日数据
             # =========================
-            realtime_data = get_realtime_etf_data(symbol)
-            if realtime_data:
-                try:
-                    # 修复：新浪日期格式可能是字符串，先标准化
-                    df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-                    latest_date = pd.to_datetime(df.iloc[-1]["Date"]).date()
-                    today = date.today()
-                    
-                    if latest_date < today:
-                        # 🔥 修复笔误：去掉未定义的etf_info，直接用realtime_data里的涨跌幅
-                        realtime_data["PctChange"] = realtime_data["PctChange"]
-                        
+            # 先标准化日期格式
+            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+            # 检查是否包含今日数据
+            if not has_today_data(df.copy()):
+                print("[新浪] 数据缺失今日行情，开始补全...")
+                realtime_data = get_realtime_etf_data(symbol)
+                if realtime_data:
+                    try:
                         # 添加实时数据行
                         new_row = pd.DataFrame([realtime_data])
                         df = pd.concat([df, new_row], ignore_index=True)
-                        print(f"✅ 已补全今日({today})实时数据到新浪数据源 | 涨跌幅：{realtime_data['PctChange']}% | 成交量：{realtime_data['Volume']:,}股")
-                except Exception as e:
-                    print(f"[新浪补全] 日期检查失败：{str(e)}")
+                        print(f"✅ 已补全今日({date.today()})实时数据到新浪数据源 | 涨跌幅：{realtime_data['PctChange']}% | 成交量：{realtime_data['Volume']:,}股")
+                    except Exception as e:
+                        print(f"[新浪补全] 失败：{str(e)}")
+            else:
+                print("[新浪] 数据已包含今日最新行情，无需补全")
             
             return df
 
@@ -406,16 +426,13 @@ def print_result(result):
     # 近十日数据输出
     log += "\n近十日数据参考：\n"
     log += "------------------------------------------------------\n"
-    log += f"{'日期':<12} {'开盘':<6} {'收盘':<6} {'涨跌幅(%)':<6} {'成交量(万)':<10} {'RSI':<8}\n"
-    #log += f"{'日期':<12} {'开盘':<6} {'最高':<6} {'最低':<6} {'收盘':<6} {'涨跌幅(%)':<7} {'成交量(万)':<10} {'RSI':<10}\n"
+    log += f"{'日期':<10} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<8} {'RSI':<6}\n"
     log += "------------------------------------------------------\n"
     
     for day in result['last_10_days']:
         # 统一格式化数据
         date = str(day['Date'])[:10] if len(str(day['Date'])) > 10 else str(day['Date'])
         open_price = f"{day['Open']:.3f}" if pd.notna(day['Open']) else "-"
-        #high_price = f"{day['High']:.3f}" if pd.notna(day['High']) else "-"
-        #low_price = f"{day['Low']:.3f}" if pd.notna(day['Low']) else "-"
         close_price = f"{day['Close']:.3f}" if pd.notna(day['Close']) else "-"
         
         # 涨跌幅直接用（已经是百分比）
@@ -426,8 +443,7 @@ def print_result(result):
         rsi = f"{day['RSI']:.3f}" if pd.notna(day['RSI']) else "-"
         
         # 拼接行数据
-        log += f"{date:<12} {open_price:<6} {close_price:<6} {pct_change_str:<6} {volume:<10} {rsi:<8}\n"
-        #log += f"{date:<12} {open_price:<8} {high_price:<8} {low_price:<8} {close_price:<8} {pct_change_str:<10} {volume:<12} {rsi:<10}\n"
+        log += f"{date:<12} {open_price:<6} {close_price:<6} {pct_change_str:<6} {volume:<9} {rsi:<8}\n"
     
     log += "------------------------------------------------------\n"
     print(log)
