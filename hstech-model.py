@@ -2,7 +2,7 @@
 import akshare as ak
 import pandas as pd
 from ta.momentum import RSIIndicator
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import time
 import random
 
@@ -395,10 +395,13 @@ def strategy(df):
 # 输出日志
 # =========================
 def print_result(result):
+    utc_now = datetime.utcnow()
+    beijing_now = utc_now + timedelta(hours=8)
+    
     log = "\n==========================\n"
     log += f"{ETF_CODE} ETF操作建议\n"
     log += "==========================\n"
-    log += f"时间：{datetime.now()}\n"
+    log += f"时间：{beijing_now.strftime('%Y-%m-%d %H:%M:%S')}\n"
     log += f"结论：{result['signal']}\n"
     log += f"置信度：{result['confidence']}\n"
     log += f"市场状态：{result['market_state']}\n"
