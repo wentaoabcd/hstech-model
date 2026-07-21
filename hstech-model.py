@@ -427,12 +427,12 @@ def print_result(result):
     
     log += "==========================\n"
     # 近十日数据输出
-    log += "\n近十日数据参考：\n"
+    log += "\n近14日数据参考：\n"
     log += "------------------------------------------------------\n"
     log += f"{'日期':<10} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<8} {'RSI':<6}\n"
     log += "------------------------------------------------------\n"
     
-    for day in result['last_10_days']:
+    for day in result['last_14_days']:
         # 统一格式化数据
         date = str(day['Date'])[:10] if len(str(day['Date'])) > 10 else str(day['Date'])
         open_price = f"{day['Open']:.3f}" if pd.notna(day['Open']) else "-"
