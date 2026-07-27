@@ -19,6 +19,8 @@ ETF_CODE = "513130"
 BUY_THRESHOLD = -1
 SELL_THRESHOLD = 1
 EXTREME_THRESHOLD = 5
+HISTORY_DAYS = 30          # 历史数据参考天数（最多30日）
+ROLLING_WINDOW = 10        # 滚动胜率使用的交易日数
 
 # ==================== 邮件配置 ====================
 QQ_EMAIL = os.getenv("SENDER_EMAIL", "你的本地调试用QQ邮箱@qq.com")
@@ -44,12 +46,7 @@ def send_email(content):
 # 辅助函数：判断数据是否包含当日数据
 # =========================
 def has_today_data(df):
-    """
-    检查DataFrame是否包含当日数据
-    返回：True（包含）/False（不包含）
-    """
     try:
-        # 统一日期格式为datetime对象
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
         latest_date = df.iloc[-1]["Date"]
         today = date.today()
@@ -59,36 +56,25 @@ def has_today_data(df):
         return False
 
 # =========================
-# 获取实时数据（彻底修复）
+# 获取实时数据
 # =========================
 def get_realtime_etf_data(symbol):
-    """获取ETF实时数据，用于补全历史数据"""
     try:
-        # 获取ETF实时数据
         spot_df = ak.fund_etf_spot_em()
-        
-        # 筛选目标ETF
         target_etf = spot_df[spot_df["代码"] == symbol]
         if target_etf.empty:
             print("[实时数据] 未找到目标ETF数据")
             return None
-        
-        # 提取核心数据
         etf_info = target_etf.iloc[0]
-        
-        # 精准映射 + 单位统一
         realtime_data = {
             "Date": datetime.now().strftime("%Y-%m-%d"),
             "Close": float(etf_info["最新价"]),
             "Open": float(etf_info["开盘价"]) if pd.notna(etf_info["开盘价"]) else float(etf_info["最新价"]),
             "High": float(etf_info["最高价"]) if pd.notna(etf_info["最高价"]) else float(etf_info["最新价"]),
             "Low": float(etf_info["最低价"]) if pd.notna(etf_info["最低价"]) else float(etf_info["最新价"]),
-            # 成交量：手 → 股（1手=100股）
             "Volume": float(etf_info["成交量"]) * 100 if pd.notna(etf_info["成交量"]) else 0,
-            # 涨跌幅直接用实时接口的（百分比）
             "PctChange": float(etf_info["涨跌幅"]) if pd.notna(etf_info["涨跌幅"]) else 0
         }
-        
         print(f"✅ 实时数据获取成功 | 最新价：{realtime_data['Close']} | 涨跌幅：{realtime_data['PctChange']}% | 成交量：{realtime_data['Volume']:,}股")
         return realtime_data
     except Exception as e:
@@ -96,14 +82,11 @@ def get_realtime_etf_data(symbol):
         return None
 
 # =========================
-# 【最终修复】获取ETF数据（双接口 + 按需补全实时数据）
+# 获取ETF数据（双接口 + 补全）
 # =========================
 def get_etf_data(symbol):
     retry = 3
 
-    # =========================
-    # 数据源1：东方财富
-    # =========================
     for i in range(retry):
         try:
             print(f"[东财] 获取数据... ({i+1}/{retry})")
@@ -125,13 +108,11 @@ def get_etf_data(symbol):
                     "涨跌幅": "PctChange"
                 }, inplace=True)
                 
-                # 先判断是否包含当日数据，仅缺失时补全
-                if not has_today_data(df.copy()):  # 传副本避免修改原数据
+                if not has_today_data(df.copy()):
                     print("[东财] 数据缺失今日行情，开始补全...")
                     realtime_data = get_realtime_etf_data(symbol)
                     if realtime_data:
                         try:
-                            # 恢复Date为字符串格式，便于拼接
                             df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
                             new_row = pd.DataFrame([realtime_data])
                             df = pd.concat([df, new_row], ignore_index=True)
@@ -140,7 +121,6 @@ def get_etf_data(symbol):
                             print(f"[东财补全] 失败：{str(e)}")
                 else:
                     print("[东财] 数据已包含今日最新行情，无需补全")
-                    # 恢复Date为字符串格式
                     df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
             
                 return df
@@ -148,9 +128,6 @@ def get_etf_data(symbol):
             print("[东财] 失败:", str(e))
         time.sleep((i + 1) * 2)
 
-    # =========================
-    # 数据源2：新浪（修复笔误+按需补全）
-    # =========================
     print("\n[新浪] 尝试备用数据源...")
     try:
         if symbol.startswith(("51", "50", "56")):
@@ -164,8 +141,6 @@ def get_etf_data(symbol):
 
         if df is not None and not df.empty and len(df) > 20:
             print("✅ 新浪数据成功")
-
-            # 统一列名
             df.rename(columns={
                 "date": "Date",
                 "close": "Close",
@@ -175,10 +150,7 @@ def get_etf_data(symbol):
                 "volume": "Volume"
             }, inplace=True)
 
-            # 计算新浪数据的涨跌幅（直接转百分比）
             df["PctChange"] = df["Close"].pct_change() * 100
-
-            # 过滤无效行
             df = df.dropna(subset=["Close", "PctChange"])
             df = df[df["Volume"] > 0]
             df = df.reset_index(drop=True)
@@ -186,18 +158,12 @@ def get_etf_data(symbol):
             if len(df) < 20:
                 raise Exception("新浪数据有效长度不足")
             
-            # =========================
-            # 🔥 按需补全：先判断是否有今日数据
-            # =========================
-            # 先标准化日期格式
             df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-            # 检查是否包含今日数据
             if not has_today_data(df.copy()):
                 print("[新浪] 数据缺失今日行情，开始补全...")
                 realtime_data = get_realtime_etf_data(symbol)
                 if realtime_data:
                     try:
-                        # 添加实时数据行
                         new_row = pd.DataFrame([realtime_data])
                         df = pd.concat([df, new_row], ignore_index=True)
                         print(f"✅ 已补全今日({date.today()})实时数据到新浪数据源 | 涨跌幅：{realtime_data['PctChange']}% | 成交量：{realtime_data['Volume']:,}股")
@@ -220,11 +186,8 @@ def get_etf_data(symbol):
 def calculate_rsi(df):
     rsi = RSIIndicator(close=df["Close"], window=14)
     df["RSI"] = rsi.rsi()
-    # 填充最后一行的RSI（实时数据行）
     if pd.isna(df.iloc[-1]["RSI"]):
-        # 重新计算RSI确保包含最新数据
         df["RSI"] = rsi.rsi()
-        # 如果还是空值，用前一天的RSI或默认值
         if pd.isna(df.iloc[-1]["RSI"]):
             df.loc[df.index[-1], "RSI"] = df.iloc[-2]["RSI"] if len(df) > 1 else 50
     return df
@@ -236,7 +199,6 @@ def consecutive_days(df):
     closes = df["Close"].tolist()
     count = 0
 
-    # 从最新一天往前数
     for i in range(len(closes)-1, 0, -1):
         if closes[i] > closes[i-1]:
             if count >= 0:
@@ -277,124 +239,219 @@ def calculate_confidence(market_state, rsi, pct_change, volume_state, consecutiv
     return max(0, min(100, score))
 
 # =========================
-# 策略逻辑
+# 核心决策逻辑（抽取出来供历史和当前共用）
 # =========================
-def strategy(df):
-    if len(df) <20:
-        raise Exception("数据量不足")
+def decision_logic(market_state, pct_change, rsi, consecutive):
+    """根据市场状态、涨跌幅、RSI、连续涨跌天返回 (signal, position)"""
+    if market_state == "上涨趋势":
+        if pct_change <= -1 and rsi < 40:
+            signal, position = "强加", "+10%"
+        elif pct_change <= -0.5:
+            signal, position = "弱加", "+5%"
+        elif pct_change >= 2 and rsi > 70:
+            signal, position = "减仓", "-5%"
+        else:
+            signal, position = "不动", "保持"
+    elif market_state == "震荡":
+        if pct_change <= -1 and (rsi < 30 or consecutive <= -2):
+            signal, position = "加仓", "+5%~10%"
+        elif pct_change >= 1 and (rsi > 70 or consecutive >= 2):
+            signal, position = "减仓", "-5%~10%"
+        else:
+            signal, position = "不动", "保持"
+    else:  # 下跌趋势
+        if pct_change <= -2 and rsi < 25:
+            signal, position = "轻仓试探", "+3%"
+        elif pct_change >= 1:
+            signal, position = "减仓", "-5%"
+        else:
+            signal, position = "不动", "观望"
+    return signal, position
 
-    latest = df.iloc[-1]
-    current_price = latest["Close"]
+# =========================
+# 计算某一日的状态（市场、成交量、连续涨跌等）
+# =========================
+def compute_states(df, idx):
+    """返回第idx行的市场状态、成交量状态、连续涨跌天数、涨跌幅、RSI、当前价、MA5、MA20"""
+    row = df.iloc[idx]
+    current_price = row["Close"]
+    pct_change = row["PctChange"]
+    rsi = row["RSI"]
     
-    # 获取数据日期
-    data_date = latest["Date"]
-
-    # 涨跌幅已经是百分比，无需转换
-    pct_change = float(latest["PctChange"])
-
-    ma5 = df["Close"].tail(5).mean()
-    ma20 = df["Close"].tail(20).mean()
-    ma20_slope = df["Close"].tail(20).diff().mean()
-
-    if current_price > ma20 and ma20_slope >0:
+    if 'MA5' not in df.columns:
+        df['MA5'] = df['Close'].rolling(5).mean()
+    if 'MA20' not in df.columns:
+        df['MA20'] = df['Close'].rolling(20).mean()
+    ma5 = df.iloc[idx]['MA5']
+    ma20 = df.iloc[idx]['MA20']
+    
+    if idx >= 19:
+        closes = df.iloc[idx-19:idx+1]['Close']
+        ma20_slope = closes.diff().mean()
+    else:
+        ma20_slope = 0
+    
+    if current_price > ma20 and ma20_slope > 0:
         market_state = "上涨趋势"
-    elif current_price < ma20 and ma20_slope <0:
+    elif current_price < ma20 and ma20_slope < 0:
         market_state = "下跌趋势"
     else:
         market_state = "震荡"
-
-    current_volume = latest["Volume"]
-    avg_volume = df["Volume"].tail(20).mean()
-    if current_volume > avg_volume*1.2:
+    
+    current_volume = row["Volume"]
+    avg_volume = df['Volume'].iloc[max(0, idx-19):idx+1].mean()
+    if current_volume > avg_volume * 1.2:
         volume_state = "放量"
-    elif current_volume < avg_volume*0.8:
+    elif current_volume < avg_volume * 0.8:
         volume_state = "缩量"
     else:
         volume_state = "正常"
+    
+    consecutive = consecutive_days(df.iloc[:idx+1])
+    
+    return market_state, volume_state, consecutive, pct_change, rsi, current_price, ma5, ma20
 
-    rsi = round(latest["RSI"],3)
-    if pd.isna(rsi): rsi=50
+# =========================
+# 策略逻辑（使用抽取的函数）
+# =========================
+def strategy(df):
+    if len(df) < 20:
+        raise Exception("数据量不足")
 
-    consecutive = consecutive_days(df)
-
-    # 策略分支
-    if market_state == "上涨趋势":
-        if pct_change <=-1 and rsi <40:
-            signal,position="强加仓","+10%"
-        elif pct_change <=-0.5:
-            signal,position="弱加仓","+5%"
-        elif pct_change >=2 and rsi>70:
-            signal,position="减仓","-5%"
-        else:
-            signal,position="不动","保持"
-
-    elif market_state == "震荡":
-        if pct_change <=-1 and (rsi<30 or consecutive <=-2):
-            signal,position="加仓","+5%~10%"
-        elif pct_change >=1 and (rsi>70 or consecutive >=2):
-            signal,position="减仓","-5%~10%"
-        else:
-            signal,position="不动","保持"
-
-    else:
-        if pct_change <=-2 and rsi <25:
-            signal,position="轻仓试探","+3%"
-        elif pct_change >=1:
-            signal,position="减仓","-5%"
-        else:
-            signal,position="不动","观望为主"
-
-    # 风险
-    risk = []
-    if market_state=="下跌趋势": risk.append("下跌趋势，控仓")
-    elif market_state=="上涨趋势": risk.append("趋势向上，不追高")
-    if rsi>70: risk.append("短期过热")
-    if rsi<30: risk.append("短期超卖")
-    if volume_state=="缩量": risk.append("量能不足")
-    if volume_state=="放量": risk.append("量能确认")
-
-    confidence = calculate_confidence(market_state,rsi,pct_change,volume_state,consecutive)
-
-    # 极端行情
+    idx = len(df) - 1
+    market_state, volume_state, consecutive, pct_change, rsi, current_price, ma5, ma20 = compute_states(df, idx)
+    
+    signal, position = decision_logic(market_state, pct_change, rsi, consecutive)
+    
     if abs(pct_change) >= EXTREME_THRESHOLD:
-        return {
-            "data_date": data_date,
-            "signal":"暂停操作",
-            "reason":"市场剧烈波动",
-            "position":position,
-            "market_state":market_state,
-            "risk":"；".join(risk),
-            "pct_change":pct_change,
-            "rsi":rsi,
-            "ma5":ma5,"ma20":ma20,
-            "current_price":current_price,
-            "volume_state":volume_state,
-            "consecutive":consecutive,
-            "confidence":confidence,
-            "last_10_days": df.tail(10)[["Date", "Open", "High", "Low", "Close", "PctChange", "Volume", "RSI"]].to_dict('records')
-        }
-
+        signal = "暂停操作"
+        position = ""
+    
+    risk = []
+    if market_state == "下跌趋势": risk.append("下跌趋势，控仓")
+    elif market_state == "上涨趋势": risk.append("趋势向上，不追高")
+    if rsi > 70: risk.append("短期过热")
+    if rsi < 30: risk.append("短期超卖")
+    if volume_state == "缩量": risk.append("量能不足")
+    if volume_state == "放量": risk.append("量能确认")
+    
+    confidence = calculate_confidence(market_state, rsi, pct_change, volume_state, consecutive)
+    
     return {
-        "data_date": data_date,
-        "signal":signal,
-        "position":position,
-        "market_state":market_state,
-        "risk":"；".join(risk),
-        "pct_change":pct_change,
-        "rsi":rsi,
-        "ma5":ma5,"ma20":ma20,
-        "current_price":current_price,
-        "volume_state":volume_state,
-        "consecutive":consecutive,
-        "confidence":confidence,
-        "reason":"正常运行",
+        "data_date": df.iloc[idx]["Date"],
+        "signal": signal,
+        "position": position,
+        "market_state": market_state,
+        "risk": "；".join(risk),
+        "pct_change": pct_change,
+        "rsi": rsi,
+        "ma5": ma5,
+        "ma20": ma20,
+        "current_price": current_price,
+        "volume_state": volume_state,
+        "consecutive": consecutive,
+        "confidence": confidence,
+        "reason": "正常运行",
         "last_10_days": df.tail(10)[["Date", "Open", "High", "Low", "Close", "PctChange", "Volume", "RSI"]].to_dict('records')
     }
 
 # =========================
-# 输出日志
+# 生成历史建议及胜率（全量滚动10个交易日）
 # =========================
-def print_result(result):
+def build_history_with_signals(df, history_days=HISTORY_DAYS):
+    """
+    对df中的每一天（从第20天起）计算建议，验证次日涨跌，并计算近10日滚动胜率
+    胜率计算使用该日期之前的连续10个交易日（全量历史数据）
+    返回一个包含最后history_days天的DataFrame，增加'建议'和'近10日胜率'列
+    """
+    df['MA5'] = df['Close'].rolling(5).mean()
+    df['MA20'] = df['Close'].rolling(20).mean()
+    
+    records = []  # 元素: {'index': i, 'signal': signal, 'position': position, 'correct': True/False/None}
+    
+    # 从第20天开始（需要20日均线）到倒数第二天（验证需要次日）
+    for i in range(20, len(df) - 1):
+        market_state, volume_state, consecutive, pct_change, rsi, _, _, _ = compute_states(df, i)
+        signal, position = decision_logic(market_state, pct_change, rsi, consecutive)
+        
+        if abs(pct_change) >= EXTREME_THRESHOLD:
+            signal = "暂停操作"
+        
+        correct = None
+        next_pct = df.iloc[i+1]['PctChange']
+        if pd.notna(next_pct) and signal != "暂停操作":
+            if '加仓' in signal or signal == '轻仓试探':
+                correct = next_pct > 0
+            elif '减仓' in signal:
+                correct = next_pct < 0
+            else:
+                correct = next_pct >= 0
+        
+        records.append({
+            'index': i,
+            'signal': signal,
+            'position': position,
+            'correct': correct
+        })
+    
+    # 处理最后一天（无次日数据）
+    if len(df) > 20:
+        i = len(df) - 1
+        market_state, volume_state, consecutive, pct_change, rsi, _, _, _ = compute_states(df, i)
+        signal, position = decision_logic(market_state, pct_change, rsi, consecutive)
+        if abs(pct_change) >= EXTREME_THRESHOLD:
+            signal = "暂停操作"
+        records.append({
+            'index': i,
+            'signal': signal,
+            'position': position,
+            'correct': None
+        })
+    
+    # 构建correct数组，索引对应df的行索引
+    correct_series = [None] * len(df)
+    record_dict = {}
+    for rec in records:
+        correct_series[rec['index']] = rec['correct']
+        record_dict[rec['index']] = rec
+    
+    # 计算每个索引的滚动胜率（该索引之前10个交易日）
+    win_rates = [None] * len(df)
+    for i in range(len(df)):
+        if i >= ROLLING_WINDOW:
+            window = correct_series[i-ROLLING_WINDOW:i]
+            valid = [c for c in window if c is not None]
+            if len(valid) == ROLLING_WINDOW:
+                win_rates[i] = sum(valid) / ROLLING_WINDOW
+            else:
+                win_rates[i] = None
+        else:
+            win_rates[i] = None
+    
+    # 取最后 history_days 行作为输出
+    last_n = min(history_days, len(df))
+    start_idx = len(df) - last_n
+    history_indices = list(range(start_idx, len(df)))
+    history_df = df.iloc[history_indices].copy()
+    
+    def get_suggestion(idx):
+        rec = record_dict.get(idx)
+        if rec and rec['signal']:
+            return f"{rec['signal']} {rec['position']}".strip()
+        return "-"
+    
+    history_df['建议'] = [get_suggestion(idx) for idx in history_indices]
+    history_df['近10日胜率'] = [
+        f"{win_rates[idx]*100:.0f}%" if win_rates[idx] is not None else "-"
+        for idx in history_indices
+    ]
+    
+    return history_df
+
+# =========================
+# 输出日志（包含历史表格）
+# =========================
+def print_result(result, history_df=None):
     utc_now = datetime.utcnow()
     beijing_now = utc_now + timedelta(hours=8)
     
@@ -426,29 +483,39 @@ def print_result(result):
     log += result["reason"] + "\n"
     
     log += "==========================\n"
-    # 近十日数据输出
-    log += "\n近10日数据参考：\n"
-    log += "------------------------------------------------------\n"
-    log += f"{'日期':<10} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<8} {'RSI':<6}\n"
-    log += "------------------------------------------------------\n"
     
-    for day in result['last_10_days']:
-        # 统一格式化数据
-        date = str(day['Date'])[:10] if len(str(day['Date'])) > 10 else str(day['Date'])
-        open_price = f"{day['Open']:.3f}" if pd.notna(day['Open']) else "-"
-        close_price = f"{day['Close']:.3f}" if pd.notna(day['Close']) else "-"
-        
-        # 涨跌幅直接用（已经是百分比）
-        pct_change_str = f"{day['PctChange']:.2f}" if pd.notna(day['PctChange']) else "-"
-        
-        # 成交量格式化：股 → 万股
-        volume = f"{int(day['Volume']/10000):,}万" if pd.notna(day['Volume']) and day['Volume'] > 0 else "-"
-        rsi = f"{day['RSI']:.3f}" if pd.notna(day['RSI']) else "-"
-        
-        # 拼接行数据
-        log += f"{date:<12} {open_price:<6} {close_price:<6} {pct_change_str:<6} {volume:<9} {rsi:<8}\n"
+    if history_df is not None and not history_df.empty:
+        log += f"\n近{len(history_df)}日数据参考（含历史建议及近10日胜率）：\n"
+        log += "------------------------------------------------------------------------------------------------------\n"
+        log += f"{'日期':<9} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<7} {'RSI':<5} {'建议':<14} {'近10日胜率':<8}\n"
+        log += "------------------------------------------------------------------------------------------------------\n"
+        for _, row in history_df.iterrows():
+            date = str(row['Date'])[:10]
+            open_price = f"{row['Open']:.3f}" if pd.notna(row['Open']) else "-"
+            close_price = f"{row['Close']:.3f}" if pd.notna(row['Close']) else "-"
+            pct_change = f"{row['PctChange']:.2f}%" if pd.notna(row['PctChange']) else "-"
+            volume = f"{int(row['Volume']/10000):,}万" if pd.notna(row['Volume']) and row['Volume'] > 0 else "-"
+            rsi = f"{row['RSI']:.3f}" if pd.notna(row['RSI']) else "-"
+            suggestion = row.get('建议', '-')
+            win_rate = row.get('近10日胜率', '-')
+            log += f"{date:<10} {open_price:<6} {close_price:<6} {pct_change:<6} {volume:<9} {rsi:<6} {suggestion:<14} {win_rate:<12}\n"
+        log += "------------------------------------------------------------------------------------------------------\n"
+    else:
+        # 兼容旧逻辑
+        log += "\n近10日数据参考：\n"
+        log += "------------------------------------------------------\n"
+        log += f"{'日期':<10} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<8} {'RSI':<6}\n"
+        log += "------------------------------------------------------\n"
+        for day in result['last_10_days']:
+            date = str(day['Date'])[:10] if len(str(day['Date'])) > 10 else str(day['Date'])
+            open_price = f"{day['Open']:.3f}" if pd.notna(day['Open']) else "-"
+            close_price = f"{day['Close']:.3f}" if pd.notna(day['Close']) else "-"
+            pct_change_str = f"{day['PctChange']:.2f}" if pd.notna(day['PctChange']) else "-"
+            volume = f"{int(day['Volume']/10000):,}万" if pd.notna(day['Volume']) and day['Volume'] > 0 else "-"
+            rsi = f"{day['RSI']:.3f}" if pd.notna(day['RSI']) else "-"
+            log += f"{date:<12} {open_price:<6} {close_price:<6} {pct_change_str:<6} {volume:<9} {rsi:<8}\n"
+        log += "------------------------------------------------------\n"
     
-    log += "------------------------------------------------------\n"
     print(log)
     return log
 
@@ -458,12 +525,13 @@ def print_result(result):
 def main():
     try:
         df = get_etf_data(ETF_CODE)
-        if df is None or df.empty or len(df)<20:
+        if df is None or df.empty or len(df) < 20:
             raise Exception("数据获取失败或长度不足")
 
         df = calculate_rsi(df)
+        history_df = build_history_with_signals(df, HISTORY_DAYS)
         result = strategy(df)
-        log_content = print_result(result)
+        log_content = print_result(result, history_df)
         send_email(log_content)
 
     except Exception as e:
