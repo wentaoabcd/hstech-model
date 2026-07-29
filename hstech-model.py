@@ -28,24 +28,21 @@ NICKNAME = "恒科操作建议推送"
 QQ_AUTH_CODE = os.getenv("SENDER_AUTH_CODE", "你的16位授权码")
 RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的接收邮箱@qq.com")
 
-# ==================== 发邮件函数 ====================
-def send_email(content):
+def send_email(content, is_html: bool = False):
+    """
+    :param content: 邮件内容
+    :param is_html: True=html富文本，False=纯文本
+    """
     try:
-        msg = MIMEText(content, "plain", "utf-8")
-        # 主题中文编码
-        msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8").encode()
-        
-        # ✅ 标准合规From（解决550 From invalid报错最终方案）
-        from_name = Header(NICKNAME, "utf-8").encode()
-        msg["From"] = f"{from_name} <{QQ_EMAIL}>"
-        msg["To"] = Header(RECEIVE_EMAIL, "utf-8").encode()
+        subtype = "html" if is_html else "plain"
+        msg = MIMEText(content, subtype, "utf-8")
+        msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8")
+        msg["From"] = f"{Header(NICKNAME, 'utf-8').encode()} <{QQ_EMAIL}>"
+        msg["To"] = RECEIVE_EMAIL
 
-        # 建立SSL连接
         with smtplib.SMTP_SSL("smtp.qq.com", 465) as server:
             server.login(QQ_EMAIL, QQ_AUTH_CODE)
-            # sendmail：信封发件人必须填原始QQ邮箱，和From内邮箱保持一致
             server.sendmail(QQ_EMAIL, RECEIVE_EMAIL, msg.as_string())
-
         print("✅ 邮件推送成功")
     except Exception as e:
         print("❌ 邮件发送失败:", e)
@@ -556,7 +553,7 @@ def main():
         history_df = build_history_with_signals(df, HISTORY_DAYS)
         result = strategy(df)
         log_content = print_result(result, history_df)
-        send_email(log_content)
+        send_email(log_content, is_html=True)
 
     except Exception as e:
         err = f"""
@@ -565,7 +562,7 @@ def main():
 错误：{str(e)}
 """
         print(err)
-        send_email(err)
+        send_email(err, is_html=True)
 
 if __name__ == "__main__":
     main()
