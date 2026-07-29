@@ -498,7 +498,7 @@ def print_result(result, history_df=None):
     if history_df is not None and not history_df.empty:
         log += f"\n近{len(history_df)}日数据参考（含历史建议及近10日胜率）：\n"
         # 设置列宽（字符数，中文字符按2个宽度，但这里仅用于等宽字体）
-        header = f"{'日期':<9} {'开盘':<4} {'收盘':<4} {'涨跌':<5} {'成交量':<7} {'RSI':<5} {'近10日胜率':<2} {'建议':<10} "
+        header = f"{'日期':<11} {'开盘':<6} {'收盘':<6} {'涨跌':<7} {'成交量':<8} {'RSI':<8} {'10日胜率':<5} {'建议':<10} "
         log += header + "\n"
         log += "-" * len(header) + "\n"
         for _, row in history_df.iterrows():
