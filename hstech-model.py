@@ -24,7 +24,7 @@ ROLLING_WINDOW = 10
 
 # ==================== 邮件配置 ====================
 QQ_EMAIL = os.getenv("SENDER_EMAIL", "你的本地调试用QQ邮箱@qq.com")
-NICKNAME = "恒生科技操作建议机器人"
+NICKNAME = "恒科操作建议推送"
 QQ_AUTH_CODE = os.getenv("SENDER_AUTH_CODE", "你的16位授权码")
 RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的接收邮箱@qq.com")
 
@@ -33,7 +33,7 @@ def send_email(content):
     try:
         msg = MIMEText(content, "plain", "utf-8")
         msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8")
-        msg["From"] = f"{NICKNAME} <{QQ_EMAIL}>"
+        msg["From"] = f'"{NICKNAME}" <{QQ_EMAIL}>'
         msg["To"] = RECEIVE_EMAIL
         server = smtplib.SMTP_SSL("smtp.qq.com", 465)
         server.login(QQ_EMAIL, QQ_AUTH_CODE)
@@ -500,7 +500,7 @@ def print_result(result, history_df=None):
         log += f"\n近{len(history_df)}日数据参考（含历史建议及近10日胜率）：\n"
         # 设置列宽（字符数，中文字符按2个宽度，但这里仅用于等宽字体）
         #header = f"{'日期':<10} {'开盘':<5} {'收盘':<5} {'涨跌':<5} {'成交量':<7} {'RSI':<6} {'10日胜率':<2} {'建议':<10} "
-        header = f"{'日期':<10} {'收盘':<5} {'涨跌':<5} {'成交量':<7} {'RSI':<6} {'10日胜率':<2} {'建议':<10} "
+        header = f"{'日期':<10} {'收盘':<5} {'涨跌':<5} {'成交量':<6} {'RSI':<5} {'10日胜率':<2} {'建议':<10} "
         log += header + "\n"
         log += "-" * len(header) + "\n"
         for _, row in history_df.iterrows():
@@ -513,7 +513,7 @@ def print_result(result, history_df=None):
             sugg = row['建议'] if pd.notna(row['建议']) else "-"
             win = row['近10日胜率'] if pd.notna(row['近10日胜率']) else "-"
             #log += f"{date:<11} {open_:<6} {close_:<6} {pct:<7} {vol:<8} {rsi:<8} {win:<5} {sugg:<10} \n"
-            log += f"{date:<11} {close_:<6} {pct:<7} {vol:<7} {rsi:<8} {win:<5} {sugg:<10} \n"
+            log += f"{date:<11} {close_:<6} {pct:<7} {vol:<7} {rsi:<7} {win:<4} {sugg:<10} \n"
     else:
         # 兼容旧逻辑（输出原10日数据）
         log += "\n近10日数据参考：\n"
