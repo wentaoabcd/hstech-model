@@ -19,8 +19,8 @@ ETF_CODE = "513130"
 BUY_THRESHOLD = -1
 SELL_THRESHOLD = 1
 EXTREME_THRESHOLD = 5
-HISTORY_DAYS = 30          # 历史数据参考天数（最多30日）
-ROLLING_WINDOW = 10        # 滚动胜率使用的交易日数
+HISTORY_DAYS = 30
+ROLLING_WINDOW = 10
 
 # ==================== 邮件配置 ====================
 QQ_EMAIL = os.getenv("SENDER_EMAIL", "你的本地调试用QQ邮箱@qq.com")
@@ -245,9 +245,9 @@ def decision_logic(market_state, pct_change, rsi, consecutive):
     """根据市场状态、涨跌幅、RSI、连续涨跌天返回 (signal, position)"""
     if market_state == "上涨趋势":
         if pct_change <= -1 and rsi < 40:
-            signal, position = "强加", "+10%"
+            signal, position = "强加仓", "+10%"
         elif pct_change <= -0.5:
-            signal, position = "弱加", "+5%"
+            signal, position = "弱加仓", "+5%"
         elif pct_change >= 2 and rsi > 70:
             signal, position = "减仓", "-5%"
         else:
@@ -265,7 +265,7 @@ def decision_logic(market_state, pct_change, rsi, consecutive):
         elif pct_change >= 1:
             signal, position = "减仓", "-5%"
         else:
-            signal, position = "不动", "观望"
+            signal, position = "不动", "观望为主"
     return signal, position
 
 # =========================
@@ -449,7 +449,7 @@ def build_history_with_signals(df, history_days=HISTORY_DAYS):
     return history_df
 
 # =========================
-# 输出日志（包含历史表格）
+# 输出日志（包含历史表格）- 手动拼接，保留涨跌符号
 # =========================
 def print_result(result, history_df=None):
     utc_now = datetime.utcnow()
@@ -484,37 +484,51 @@ def print_result(result, history_df=None):
     
     log += "==========================\n"
     
+    # 定义格式化涨跌幅的函数
+    def format_pct(x):
+        if pd.isna(x):
+            return "-"
+        if x > 0:
+            return f"+{x:.2f}%"
+        elif x == 0:
+            return "±0.00%"
+        else:
+            return f"{x:.2f}%"
+    
     if history_df is not None and not history_df.empty:
         log += f"\n近{len(history_df)}日数据参考（含历史建议及近10日胜率）：\n"
-        log += "------------------------------------------------------------------------------------------------------\n"
-        log += f"{'日期':<9} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<7} {'RSI':<5} {'建议':<14} {'近10日胜率':<8}\n"
-        log += "------------------------------------------------------------------------------------------------------\n"
+        # 设置列宽（字符数，中文字符按2个宽度，但这里仅用于等宽字体）
+        header = f"{'日期':<9} {'开盘':<4} {'收盘':<4} {'涨跌':<5} {'成交量':<7} {'RSI':<5} {'近10日胜率':<2} {'建议':<10} "
+        log += header + "\n"
+        log += "-" * len(header) + "\n"
         for _, row in history_df.iterrows():
             date = str(row['Date'])[:10]
-            open_price = f"{row['Open']:.3f}" if pd.notna(row['Open']) else "-"
-            close_price = f"{row['Close']:.3f}" if pd.notna(row['Close']) else "-"
-            pct_change = f"{row['PctChange']:.2f}%" if pd.notna(row['PctChange']) else "-"
-            volume = f"{int(row['Volume']/10000):,}万" if pd.notna(row['Volume']) and row['Volume'] > 0 else "-"
+            open_ = f"{row['Open']:.3f}" if pd.notna(row['Open']) else "-"
+            close_ = f"{row['Close']:.3f}" if pd.notna(row['Close']) else "-"
+            pct = format_pct(row['PctChange'])
+            vol = f"{int(row['Volume']/10000):,}万" if pd.notna(row['Volume']) and row['Volume'] > 0 else "-"
             rsi = f"{row['RSI']:.3f}" if pd.notna(row['RSI']) else "-"
-            suggestion = row.get('建议', '-')
-            win_rate = row.get('近10日胜率', '-')
-            log += f"{date:<10} {open_price:<6} {close_price:<6} {pct_change:<6} {volume:<9} {rsi:<6} {suggestion:<14} {win_rate:<12}\n"
-        log += "------------------------------------------------------------------------------------------------------\n"
+            sugg = row['建议'] if pd.notna(row['建议']) else "-"
+            win = row['近10日胜率'] if pd.notna(row['近10日胜率']) else "-"
+            log += f"{date:<11} {open_:<6} {close_:<6} {pct:<7} {vol:<8} {rsi:<8} {win:<5} {sugg:<10} \n"
     else:
-        # 兼容旧逻辑
+        # 兼容旧逻辑（输出原10日数据）
         log += "\n近10日数据参考：\n"
-        log += "------------------------------------------------------\n"
-        log += f"{'日期':<10} {'开盘':<4} {'收盘':<4} {'涨跌':<4} {'成交量':<8} {'RSI':<6}\n"
-        log += "------------------------------------------------------\n"
-        for day in result['last_10_days']:
-            date = str(day['Date'])[:10] if len(str(day['Date'])) > 10 else str(day['Date'])
-            open_price = f"{day['Open']:.3f}" if pd.notna(day['Open']) else "-"
-            close_price = f"{day['Close']:.3f}" if pd.notna(day['Close']) else "-"
-            pct_change_str = f"{day['PctChange']:.2f}" if pd.notna(day['PctChange']) else "-"
-            volume = f"{int(day['Volume']/10000):,}万" if pd.notna(day['Volume']) and day['Volume'] > 0 else "-"
-            rsi = f"{day['RSI']:.3f}" if pd.notna(day['RSI']) else "-"
-            log += f"{date:<12} {open_price:<6} {close_price:<6} {pct_change_str:<6} {volume:<9} {rsi:<8}\n"
-        log += "------------------------------------------------------\n"
+        if 'last_10_days' in result and result['last_10_days']:
+            df10 = pd.DataFrame(result['last_10_days'])
+            header = f"{'日期':<8} {'开盘':<8} {'收盘':<8} {'涨跌':<8} {'成交量':<12} {'RSI':<8}"
+            log += header + "\n"
+            log += "-" * len(header) + "\n"
+            for _, row in df10.iterrows():
+                date = str(row['Date'])[:10]
+                open_ = f"{row['Open']:.3f}" if pd.notna(row['Open']) else "-"
+                close_ = f"{row['Close']:.3f}" if pd.notna(row['Close']) else "-"
+                pct = format_pct(row['PctChange'])
+                vol = f"{int(row['Volume']/10000):,}万" if pd.notna(row['Volume']) and row['Volume'] > 0 else "-"
+                rsi = f"{row['RSI']:.3f}" if pd.notna(row['RSI']) else "-"
+                log += f"{date:<20} {open_:<8} {close_:<8} {pct:<8} {vol:<12} {rsi:<8}\n"
+        else:
+            log += "无历史数据\n"
     
     print(log)
     return log
