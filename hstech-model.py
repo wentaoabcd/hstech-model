@@ -32,13 +32,20 @@ RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的接收邮箱@qq.com")
 def send_email(content):
     try:
         msg = MIMEText(content, "plain", "utf-8")
-        msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8")
-        msg["From"] = f'"{NICKNAME}" <{QQ_EMAIL}>'
-        msg["To"] = RECEIVE_EMAIL
-        server = smtplib.SMTP_SSL("smtp.qq.com", 465)
-        server.login(QQ_EMAIL, QQ_AUTH_CODE)
-        server.sendmail(QQ_EMAIL, RECEIVE_EMAIL, msg.as_string())
-        server.quit()
+        # 主题中文编码
+        msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8").encode()
+        
+        # ✅ 标准合规From（解决550 From invalid报错最终方案）
+        from_name = Header(NICKNAME, "utf-8").encode()
+        msg["From"] = f"{from_name} <{QQ_EMAIL}>"
+        msg["To"] = Header(RECEIVE_EMAIL, "utf-8").encode()
+
+        # 建立SSL连接
+        with smtplib.SMTP_SSL("smtp.qq.com", 465) as server:
+            server.login(QQ_EMAIL, QQ_AUTH_CODE)
+            # sendmail：信封发件人必须填原始QQ邮箱，和From内邮箱保持一致
+            server.sendmail(QQ_EMAIL, RECEIVE_EMAIL, msg.as_string())
+
         print("✅ 邮件推送成功")
     except Exception as e:
         print("❌ 邮件发送失败:", e)
