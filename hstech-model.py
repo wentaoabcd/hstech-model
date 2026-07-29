@@ -28,16 +28,67 @@ NICKNAME = "恒科操作建议推送"
 QQ_AUTH_CODE = os.getenv("SENDER_AUTH_CODE", "你的16位授权码")
 RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的接收邮箱@qq.com")
 
+# ==================== 【新增HTML邮件模板函数，仅此处新增】 ====================
+def build_html_email(raw_text: str) -> str:
+    """
+    将控制台原始文本转为美化HTML邮件
+    raw_text：print_result输出的原始日志字符串
+    """
+    # 把换行替换成html换行
+    content_html = raw_text.replace("\n", "<br>")
+    html = f"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<body style="margin:0; padding:0; background-color:#f4f6f9; font-family:Microsoft YaHei, Arial, sans-serif; font-size:15px;">
+    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+        <tr>
+            <td align="center" style="padding:30px 10px;">
+                <table width="600" border="0" cellpadding="0" cellspacing="0" style="background:#ffffff; border-radius:12px; overflow:hidden; box-shadow: 0 2px 14px rgba(0,0,0,0.07);">
+                    <!-- 顶部标题栏 -->
+                    <tr>
+                        <td style="background:#165DFF; padding:18px 24px;">
+                            <h2 style="margin:0; color:#ffffff; font-size:19px; font-weight:normal;">📈 {ETF_CODE} ETF 操作建议通知</h2>
+                        </td>
+                    </tr>
+                    <!-- 正文区域 -->
+                    <tr>
+                        <td style="padding:24px; line-height:1.7; color:#2c333a;">
+                            <pre style="white-space:pre-wrap; font-family:Consolas,Microsoft YaHei; margin:0; font-size:14px;">{content_html}</pre>
+                        </td>
+                    </tr>
+                    <!-- 底部风险提示 -->
+                    <tr>
+                        <td style="background:#f7f8fa; padding:16px 24px; border-top:1px solid #eeeeee; font-size:13px; color:#666666;">
+                            ⚠️ 策略信号仅为程序量化参考，<strong>不构成任何投资建议</strong>，市场存在风险，请自主审慎决策。
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+"""
+    return html
+
+# ==================== 发邮件函数（修复From头550报错，逻辑不变） ====================
 def send_email(content, is_html: bool = False):
     """
     :param content: 邮件内容
     :param is_html: True=html富文本，False=纯文本
     """
     try:
-        subtype = "html" if is_html else "plain"
-        msg = MIMEText(content, subtype, "utf-8")
+        if is_html:
+            mail_body = build_html_email(content)
+            subtype = "html"
+        else:
+            mail_body = content
+            subtype = "plain"
+
+        msg = MIMEText(mail_body, subtype, "utf-8")
         msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8")
-        msg["From"] = f"{Header(NICKNAME, 'utf-8').encode()} <{QQ_EMAIL}>"
+        # ✅ 修复550 From header invalid 标准写法
+        msg["From"] = Header(NICKNAME, "utf-8").encode() + f" <{QQ_EMAIL}>"
         msg["To"] = RECEIVE_EMAIL
 
         with smtplib.SMTP_SSL("smtp.qq.com", 465) as server:
@@ -502,21 +553,17 @@ def print_result(result, history_df=None):
     
     if history_df is not None and not history_df.empty:
         log += f"\n近{len(history_df)}日数据参考（含历史建议及近10日胜率）：\n"
-        # 设置列宽（字符数，中文字符按2个宽度，但这里仅用于等宽字体）
-        #header = f"{'日期':<10} {'开盘':<5} {'收盘':<5} {'涨跌':<5} {'成交量':<7} {'RSI':<6} {'10日胜率':<2} {'建议':<10} "
         header = f"{'日期':<10} {'收盘':<5} {'涨跌':<5} {'成交量':<6} {'RSI':<5} {'10日胜率':<2} {'建议':<10} "
         log += header + "\n"
         log += "-" * len(header) + "\n"
         for _, row in history_df.iterrows():
             date = str(row['Date'])[:10]
-            open_ = f"{row['Open']:.3f}" if pd.notna(row['Open']) else "-"
             close_ = f"{row['Close']:.3f}" if pd.notna(row['Close']) else "-"
             pct = format_pct(row['PctChange'])
             vol = f"{int(row['Volume']/10000):,}万" if pd.notna(row['Volume']) and row['Volume'] > 0 else "-"
             rsi = f"{row['RSI']:.3f}" if pd.notna(row['RSI']) else "-"
             sugg = row['建议'] if pd.notna(row['建议']) else "-"
             win = row['近10日胜率'] if pd.notna(row['近10日胜率']) else "-"
-            #log += f"{date:<11} {open_:<6} {close_:<6} {pct:<7} {vol:<8} {rsi:<8} {win:<5} {sugg:<10} \n"
             log += f"{date:<11} {close_:<6} {pct:<7} {vol:<7} {rsi:<7} {win:<4} {sugg:<10} \n"
     else:
         # 兼容旧逻辑（输出原10日数据）
