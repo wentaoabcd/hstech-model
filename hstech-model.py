@@ -24,6 +24,7 @@ ROLLING_WINDOW = 10
 
 # ==================== 邮件配置 ====================
 QQ_EMAIL = os.getenv("SENDER_EMAIL", "你的本地调试用QQ邮箱@qq.com")
+NICKNAME = "恒生科技操作建议机器人"
 QQ_AUTH_CODE = os.getenv("SENDER_AUTH_CODE", "你的16位授权码")
 RECEIVE_EMAIL = os.getenv("RECV_EMAIL", "你的接收邮箱@qq.com")
 
@@ -32,7 +33,7 @@ def send_email(content):
     try:
         msg = MIMEText(content, "plain", "utf-8")
         msg["Subject"] = Header(f"{ETF_CODE} ETF 操作建议", "utf-8")
-        msg["From"] = QQ_EMAIL
+        msg["From"] = f"{NICKNAME} <{QQ_EMAIL}>"
         msg["To"] = RECEIVE_EMAIL
         server = smtplib.SMTP_SSL("smtp.qq.com", 465)
         server.login(QQ_EMAIL, QQ_AUTH_CODE)
